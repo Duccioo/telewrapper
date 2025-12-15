@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "telewrapper"
+version = "0.1.0"
+description = "Remote command wrapper and monitoring tool for Telegram"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [
+  {name = "User", email = "user@example.com"}
+]
+dependencies = [
+    "python-telegram-bot>=20.0",
+    "psutil",
+    "pynvml"
+]
+
+[project.scripts]
+telewrapper = "telewrapper.cli:entry_point"
+
+[project.urls]
+Homepage = "https://github.com/tuouser/telewrapper"

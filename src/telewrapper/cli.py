@@ -8,6 +8,7 @@ import socket
 import platform
 import time
 import psutil
+import uuid
 from collections import deque
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -23,9 +24,9 @@ except ImportError:
     PYNVML_INSTALLED = False
 
 # --- CONFIGURAZIONE E COSTANTI ---
-MAX_LOG_LINES = 15
-UPDATE_INTERVAL = 4.0
-RECENT_FILES_LIMIT = 5
+MAX_LOG_LINES = 20
+UPDATE_INTERVAL = 2.0
+RECENT_FILES_LIMIT = 10
 
 
 class TeleWrapper:
@@ -38,8 +39,10 @@ class TeleWrapper:
         # Identificativo Univoco Sessione (Hostname + PID)
         self.hostname = socket.gethostname()
         self.pid = os.getpid()
-        self.session_id = f"{self.hostname}_{self.pid}"
+        # Usa un UUID breve per evitare problemi con caratteri speciali o lunghezza
+        self.session_id = str(uuid.uuid4())[:8]
         self.shutdown_signal = False
+        self.current_menu = "main"
 
         # Stato
         self.process = None
@@ -183,12 +186,17 @@ class TeleWrapper:
 
     async def run_process(self):
         """Esegue il comando utente e cattura l'output."""
+        # Force unbuffered output for Python scripts
+        env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
+
         # Se siamo su Windows usiamo una shell diversa, ma per Linux/Mac standard è OK
         self.process = await asyncio.create_subprocess_shell(
             self.command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             cwd=self.working_dir,
+            env=env,
         )
 
         while True:
@@ -219,6 +227,9 @@ class TeleWrapper:
 
         while True:
             await asyncio.sleep(UPDATE_INTERVAL)
+            if self.shutdown_signal:
+                break
+
             try:
                 if self.dashboard_message_id:
                     text = self.build_dashboard_text()
@@ -228,7 +239,7 @@ class TeleWrapper:
                             message_id=self.dashboard_message_id,
                             text=text,
                             parse_mode=ParseMode.HTML,
-                            reply_markup=self.get_keyboard(),
+                            reply_markup=self.get_keyboard(self.current_menu),
                         )
                     except Exception:
                         pass
@@ -240,62 +251,138 @@ class TeleWrapper:
 
     async def handle_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
-        data = query.data.split(":")
-        action = data[0]
-        target_session = data[1]
+        print(f"DEBUG: Button clicked: {query.data}")
 
-        if target_session != self.session_id:
+        try:
+            data = query.data.split(":")
+            action = data[0]
+            target_session = data[1]
+
+            if target_session != self.session_id:
+                print(f"DEBUG: Session mismatch: {target_session} != {self.session_id}")
+                await query.answer("Sessione scaduta o non valida", show_alert=True)
+                return
+
             await query.answer()
-            return
 
-        await query.answer()
+            if action == "refresh":
+                # Il refresh avviene automaticamente, ma possiamo forzare un update immediato se necessario
+                pass
 
-        if action == "refresh":
-            pass
+            elif action == "kill":
+                if self.process and self.is_running:
+                    try:
+                        self.process.terminate()
+                        self.log_buffer.append(
+                            "\n[WRAPPER] Sent SIGTERM to process...\n"
+                        )
+                    except Exception as e:
+                        self.log_buffer.append(f"\n[WRAPPER] Error killing: {e}\n")
 
-        elif action == "kill":
-            if self.process and self.is_running:
-                try:
-                    self.process.terminate()
-                    self.log_buffer.append("\n[WRAPPER] Sent SIGTERM to process...\n")
-                except Exception as e:
-                    self.log_buffer.append(f"\n[WRAPPER] Error killing: {e}\n")
-
-        elif action == "exit":
-            self.shutdown_signal = True
-            await query.edit_message_text(f"🛑 Wrapper su {self.hostname} terminato.")
-
-        elif action == "files":
-            await query.edit_message_reply_markup(
-                reply_markup=self.get_keyboard("files")
-            )
-
-        elif action == "back":
-            await query.edit_message_reply_markup(
-                reply_markup=self.get_keyboard("main")
-            )
-
-        elif action == "dl":
-            filename = data[2]
-            filepath = os.path.join(self.working_dir, filename)
-            if os.path.exists(filepath):
-                await context.bot.send_document(
-                    chat_id=self.chat_id,
-                    document=open(filepath, "rb"),
-                    caption=f"File from {self.hostname}",
+            elif action == "exit":
+                self.shutdown_signal = True
+                # Ferma l'updater impostando il segnale, poi aggiorna il messaggio finale
+                await query.edit_message_text(
+                    f"🛑 Wrapper su {self.hostname} terminato."
                 )
-            else:
-                await context.bot.send_message(
-                    chat_id=self.chat_id, text="File non trovato."
+
+            elif action == "files":
+                print("DEBUG: Switching to files menu")
+                self.current_menu = "files"
+                await query.edit_message_reply_markup(
+                    reply_markup=self.get_keyboard("files")
                 )
+
+            elif action == "back":
+                print("DEBUG: Switching to main menu")
+                self.current_menu = "main"
+                await query.edit_message_reply_markup(
+                    reply_markup=self.get_keyboard("main")
+                )
+
+            elif action == "dl":
+                # Ricostruisce il nome file nel caso contenga ':'
+                filename = ":".join(data[2:])
+                print(f"DEBUG: Downloading file: {filename}")
+                filepath = os.path.join(self.working_dir, filename)
+                if os.path.exists(filepath):
+                    await context.bot.send_document(
+                        chat_id=self.chat_id,
+                        document=open(filepath, "rb"),
+                        caption=f"File from {self.hostname}",
+                    )
+                else:
+                    await context.bot.send_message(
+                        chat_id=self.chat_id, text="File non trovato."
+                    )
+        except Exception as e:
+            print(f"ERROR in handle_button: {e}")
+            self.log_buffer.append(f"[Wrapper Error] Button handler: {e}\n")
+
+
+async def run_test_mode(token, chat_id):
+    """Esegue un test rapido delle funzionalità del bot."""
+    print("🔵 Avvio test funzionalità Telewrapper...")
+    try:
+        # Inizializza Application
+        app = Application.builder().token(token).build()
+
+        # Inizializza Wrapper fittizio per testare stats
+        wrapper = TeleWrapper(token, chat_id, "echo 'Test Mode'", os.getcwd())
+
+        async with app:
+            await app.start()
+
+            # 1. Test Invio Messaggio
+            print("📨 Invio messaggio di test a Telegram...")
+            msg_text = (
+                "🔔 <b>Telewrapper Test</b>\n\n"
+                "Se leggi questo messaggio, il bot funziona correttamente!\n"
+                "Sto verificando le statistiche di sistema..."
+            )
+            await app.bot.send_message(
+                chat_id=chat_id, text=msg_text, parse_mode=ParseMode.HTML
+            )
+            print("✅ Messaggio inviato.")
+
+            # 2. Test Statistiche
+            print("📊 Verifica statistiche di sistema...")
+            cpu, mem, gpu = wrapper.get_system_stats()
+            stats_msg = (
+                f"✅ <b>Test Completato</b>\n\n"
+                f"CPU: {cpu}%\n"
+                f"RAM: {mem}%\n"
+                f"GPU: {gpu if gpu else 'Non rilevata/Disponibile'}"
+            )
+            print(f"   CPU: {cpu}%, RAM: {mem}%, GPU: {gpu}")
+
+            await app.bot.send_message(
+                chat_id=chat_id, text=stats_msg, parse_mode=ParseMode.HTML
+            )
+            print("✅ Statistiche inviate.")
+
+            await app.stop()
+
+        print("🟢 Test completato con successo!")
+
+    except Exception as e:
+        print(f"❌ ERRORE durante il test: {e}")
+        sys.exit(1)
 
 
 async def main():
     parser = argparse.ArgumentParser(description="Telegram Command Wrapper")
-    parser.add_argument("command", help="Il comando da eseguire (tra virgolette)")
+    parser.add_argument(
+        "command", nargs="?", help="Il comando da eseguire (tra virgolette)"
+    )
     parser.add_argument("--token", help="Bot Token Telegram")
     parser.add_argument("--chat_id", help="Chat ID Telegram")
     parser.add_argument("--config", help="Path al file di config")
+    parser.add_argument(
+        "--test",
+        action="store_true",
+        help="Esegui un test di connessione e funzionalità",
+    )
 
     args = parser.parse_args()
 
@@ -320,6 +407,14 @@ async def main():
         print("Errore: Token e Chat ID sono obbligatori (via CLI, Config o ENV).")
         sys.exit(1)
 
+    if args.test:
+        await run_test_mode(token, chat_id)
+        return
+
+    if not args.command:
+        print("Errore: Devi specificare un comando da eseguire (o usare --test).")
+        sys.exit(1)
+
     print(f"Starting Wrapper for: {args.command}")
 
     wrapper = TeleWrapper(token, chat_id, args.command, os.getcwd())
@@ -328,12 +423,14 @@ async def main():
 
     async with app:
         await app.start()
+        await app.updater.start_polling()
         updater_task = asyncio.create_task(wrapper.telegram_updater(app))
         await wrapper.run_process()
 
         while not wrapper.shutdown_signal:
             await asyncio.sleep(1)
 
+        await app.updater.stop()
         updater_task.cancel()
         await app.stop()
 

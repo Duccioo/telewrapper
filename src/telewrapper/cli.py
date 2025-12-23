@@ -5,8 +5,6 @@ import configparser
 import os
 import sys
 import socket
-import platform
-import time
 import psutil
 import uuid
 from collections import deque
@@ -24,9 +22,8 @@ except ImportError:
     PYNVML_INSTALLED = False
 
 # --- CONFIGURAZIONE E COSTANTI ---
-MAX_LOG_LINES = 20
-UPDATE_INTERVAL = 2.0
-RECENT_FILES_LIMIT = 10
+MAX_LOG_LINES = 50
+UPDATE_INTERVAL = 3.0
 
 
 class TeleWrapper:
@@ -42,7 +39,6 @@ class TeleWrapper:
         # Usa un UUID breve per evitare problemi con caratteri speciali o lunghezza
         self.session_id = str(uuid.uuid4())[:8]
         self.shutdown_signal = False
-        self.current_menu = "main"
 
         # Stato
         self.process = None
@@ -78,7 +74,8 @@ class TeleWrapper:
                     mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
                     used_mem_gb = mem_info.used / 1024**3
                     total_mem_gb = mem_info.total / 1024**3
-                    gpu_info += f"GPU {i}: {util}% | VRAM: {used_mem_gb:.1f}/{total_mem_gb:.1f}GB\n"
+                    vram_percent = (mem_info.used / mem_info.total) * 100
+                    gpu_info += f"GPU {i}: {util}% | VRAM: {used_mem_gb:.1f}/{total_mem_gb:.1f}GB ({vram_percent:.0f}%)\n"
             except Exception:
                 gpu_info = "GPU Err"
 
@@ -119,70 +116,34 @@ class TeleWrapper:
 
         return msg
 
-    def get_keyboard(self, menu="main"):
-        """Genera la tastiera inline dinamica."""
+    def get_keyboard(self):
+        """Genera la tastiera inline."""
         pfx = f"{self.session_id}"
 
-        if menu == "main":
-            buttons = [
+        buttons = [
+            [
+                InlineKeyboardButton(
+                    "🔄 Refresh", callback_data=f"refresh:{pfx}"
+                )
+            ],
+        ]
+        if self.is_running:
+            buttons.append(
                 [
                     InlineKeyboardButton(
-                        "📂 Files Recenti", callback_data=f"files:{pfx}"
+                        "🛑 Termina Processo", callback_data=f"kill:{pfx}"
                     )
-                ],
+                ]
+            )
+        else:
+            buttons.append(
                 [
                     InlineKeyboardButton(
-                        "🔄 Refresh Manuale", callback_data=f"refresh:{pfx}"
+                        "❌ Chiudi Wrapper", callback_data=f"exit:{pfx}"
                     )
-                ],
-            ]
-            if self.is_running:
-                buttons.append(
-                    [
-                        InlineKeyboardButton(
-                            "🛑 Termina Processo", callback_data=f"kill:{pfx}"
-                        )
-                    ]
-                )
-            else:
-                buttons.append(
-                    [
-                        InlineKeyboardButton(
-                            "❌ Chiudi Wrapper", callback_data=f"exit:{pfx}"
-                        )
-                    ]
-                )
-            return InlineKeyboardMarkup(buttons)
-
-        elif menu == "files":
-            files_found = []
-            try:
-                for f in os.listdir(self.working_dir):
-                    full_path = os.path.join(self.working_dir, f)
-                    if os.path.isfile(full_path) and not f.startswith("."):
-                        files_found.append((f, os.path.getmtime(full_path)))
-
-                files_found.sort(key=lambda x: x[1], reverse=True)
-                top_files = files_found[:RECENT_FILES_LIMIT]
-
-                buttons = []
-                for fname, _ in top_files:
-                    btn_text = (fname[:20] + "..") if len(fname) > 20 else fname
-                    buttons.append(
-                        [
-                            InlineKeyboardButton(
-                                f"⬇️ {btn_text}", callback_data=f"dl:{pfx}:{fname}"
-                            )
-                        ]
-                    )
-
-                buttons.append(
-                    [InlineKeyboardButton("🔙 Indietro", callback_data=f"back:{pfx}")]
-                )
-                return InlineKeyboardMarkup(buttons)
-            except Exception as e:
-                self.log_buffer.append(f"[Wrapper Error] List files failed: {str(e)}\n")
-                return self.get_keyboard("main")
+                ]
+            )
+        return InlineKeyboardMarkup(buttons)
 
     async def run_process(self):
         """Esegue il comando utente e cattura l'output."""
@@ -239,7 +200,7 @@ class TeleWrapper:
                             message_id=self.dashboard_message_id,
                             text=text,
                             parse_mode=ParseMode.HTML,
-                            reply_markup=self.get_keyboard(self.current_menu),
+                            reply_markup=self.get_keyboard(),
                         )
                     except Exception:
                         pass
@@ -285,36 +246,6 @@ class TeleWrapper:
                 await query.edit_message_text(
                     f"🛑 Wrapper su {self.hostname} terminato."
                 )
-
-            elif action == "files":
-                print("DEBUG: Switching to files menu")
-                self.current_menu = "files"
-                await query.edit_message_reply_markup(
-                    reply_markup=self.get_keyboard("files")
-                )
-
-            elif action == "back":
-                print("DEBUG: Switching to main menu")
-                self.current_menu = "main"
-                await query.edit_message_reply_markup(
-                    reply_markup=self.get_keyboard("main")
-                )
-
-            elif action == "dl":
-                # Ricostruisce il nome file nel caso contenga ':'
-                filename = ":".join(data[2:])
-                print(f"DEBUG: Downloading file: {filename}")
-                filepath = os.path.join(self.working_dir, filename)
-                if os.path.exists(filepath):
-                    await context.bot.send_document(
-                        chat_id=self.chat_id,
-                        document=open(filepath, "rb"),
-                        caption=f"File from {self.hostname}",
-                    )
-                else:
-                    await context.bot.send_message(
-                        chat_id=self.chat_id, text="File non trovato."
-                    )
         except Exception as e:
             print(f"ERROR in handle_button: {e}")
             self.log_buffer.append(f"[Wrapper Error] Button handler: {e}\n")

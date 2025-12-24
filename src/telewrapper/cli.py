@@ -7,6 +7,7 @@ import sys
 import socket
 import psutil
 import uuid
+import warnings
 from collections import deque
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -15,7 +16,9 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Cont
 
 # Gestione opzionale pynvml (per evitare crash su macchine non-NVIDIA)
 try:
-    import pynvml
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=FutureWarning)
+        import pynvml
 
     PYNVML_INSTALLED = True
 except ImportError:
@@ -121,11 +124,7 @@ class TeleWrapper:
         pfx = f"{self.session_id}"
 
         buttons = [
-            [
-                InlineKeyboardButton(
-                    "🔄 Refresh", callback_data=f"refresh:{pfx}"
-                )
-            ],
+            [InlineKeyboardButton("🔄 Refresh", callback_data=f"refresh:{pfx}")],
         ]
         if self.is_running:
             buttons.append(
@@ -137,11 +136,7 @@ class TeleWrapper:
             )
         else:
             buttons.append(
-                [
-                    InlineKeyboardButton(
-                        "❌ Chiudi Wrapper", callback_data=f"exit:{pfx}"
-                    )
-                ]
+                [InlineKeyboardButton("❌ Chiudi Wrapper", callback_data=f"exit:{pfx}")]
             )
         return InlineKeyboardMarkup(buttons)
 

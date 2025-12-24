@@ -25,7 +25,7 @@
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/telewrapper.git
+git clone https://github.com/duccioo/telewrapper.git
 cd telewrapper
 
 # Install the package

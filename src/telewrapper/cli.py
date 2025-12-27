@@ -13,6 +13,7 @@ from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.error import BadRequest, RetryAfter, NetworkError, TimedOut
 
 # Gestione opzionale pynvml (per evitare crash su macchine non-NVIDIA)
 try:
@@ -26,7 +27,7 @@ except ImportError:
 
 # --- CONFIGURAZIONE E COSTANTI ---
 MAX_LOG_LINES = 50
-UPDATE_INTERVAL = 3.0
+UPDATE_INTERVAL = 5.0
 
 
 class TeleWrapper:
@@ -52,6 +53,7 @@ class TeleWrapper:
 
         # Telegram Message ID
         self.dashboard_message_id = None
+        self.last_message_text = None
 
         # Inizializzazione GPU
         self.gpu_available = False
@@ -170,13 +172,15 @@ class TeleWrapper:
     async def telegram_updater(self, app):
         """Task di background per aggiornare il messaggio dashboard."""
         try:
+            initial_text = self.build_dashboard_text()
             msg = await app.bot.send_message(
                 chat_id=self.chat_id,
-                text=self.build_dashboard_text(),
+                text=initial_text,
                 parse_mode=ParseMode.HTML,
                 reply_markup=self.get_keyboard(),
             )
             self.dashboard_message_id = msg.message_id
+            self.last_message_text = initial_text
         except Exception as e:
             print(f"Errore Telegram Init: {e}")
             return
@@ -189,6 +193,11 @@ class TeleWrapper:
             try:
                 if self.dashboard_message_id:
                     text = self.build_dashboard_text()
+
+                    # Evita chiamate API inutili se il testo non è cambiato
+                    if text == self.last_message_text:
+                        continue
+
                     try:
                         await app.bot.edit_message_text(
                             chat_id=self.chat_id,
@@ -197,10 +206,24 @@ class TeleWrapper:
                             parse_mode=ParseMode.HTML,
                             reply_markup=self.get_keyboard(),
                         )
-                    except Exception:
+                        self.last_message_text = text
+                    except BadRequest as e:
+                        if "Message is not modified" in str(e):
+                            # Ignora errore se il messaggio è identico (caso limite)
+                            pass
+                        else:
+                            print(f"Telegram BadRequest: {e}")
+                    except RetryAfter as e:
+                        print(f"Telegram FloodLimit: sleeping {e.retry_after}s")
+                        await asyncio.sleep(e.retry_after)
+                    except (NetworkError, TimedOut):
+                        # Problemi di rete temporanei, riprova al prossimo ciclo
                         pass
+                    except Exception as e:
+                        print(f"Telegram Update Error: {e}")
+
             except Exception as e:
-                pass
+                print(f"Critical Loop Error: {e}")
 
             if not self.is_running and self.shutdown_signal:
                 break

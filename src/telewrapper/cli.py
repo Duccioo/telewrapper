@@ -106,7 +106,7 @@ class TeleWrapper:
         if not logs:
             logs = "Starting..."
 
-        msg = (
+        header = (
             f"🖥 <b>{self.hostname}</b> (PID: {self.pid})\n"
             f"⚙️ <code>{self.command}</code>\n\n"
             f"Status: {status_icon}\n"
@@ -114,10 +114,24 @@ class TeleWrapper:
             f"CPU: {cpu}% | RAM: {mem}%\n"
         )
         if gpu_stats:
-            msg += f"<code>{gpu_stats}</code>\n"
+            header += f"<code>{gpu_stats}</code>\n"
 
-        msg += f"\n📜 <b>Recent Log (Last {MAX_LOG_LINES}):</b>\n"
-        msg += f"<pre>{logs}</pre>"
+        header += f"\n📜 <b>Recent Log (Last {MAX_LOG_LINES}):</b>\n"
+
+        # Calcolo spazio disponibile (Telegram limit 4096)
+        max_len = 4096
+        overhead = len(header) + len("<pre></pre>") + 20
+        available_chars = max_len - overhead
+
+        if len(logs) > available_chars:
+            trunc_msg = "\n...[truncated]...\n"
+            keep_len = available_chars - len(trunc_msg)
+            if keep_len > 0:
+                logs = trunc_msg + logs[-keep_len:]
+            else:
+                logs = trunc_msg
+
+        msg = f"{header}<pre>{logs}</pre>"
 
         return msg
 

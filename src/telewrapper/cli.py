@@ -8,6 +8,8 @@ import socket
 import psutil
 import uuid
 import warnings
+import html
+import re
 from collections import deque
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -28,6 +30,12 @@ except ImportError:
 # --- CONFIGURAZIONE E COSTANTI ---
 MAX_LOG_LINES = 50
 UPDATE_INTERVAL = 5.0
+
+
+def strip_ansi(text):
+    """Rimuove codici ANSI (colori, ecc) da una stringa."""
+    ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+    return ansi_escape.sub('', text)
 
 
 class TeleWrapper:
@@ -101,20 +109,28 @@ class TeleWrapper:
             )
         )
 
-        # Costruzione Log (Escape per sicurezza HTML/Markdown)
-        logs = "".join(self.log_buffer).replace("<", "&lt;").replace(">", "&gt;")
+        # Costruzione Log (Clean ANSI & Escape HTML)
+        raw_logs = "".join(self.log_buffer)
+        clean_logs = strip_ansi(raw_logs)
+        logs = html.escape(clean_logs)
+
         if not logs:
             logs = "Starting..."
 
+        # Escape other fields per sicurezza HTML
+        safe_hostname = html.escape(self.hostname)
+        safe_command = html.escape(self.command)
+        safe_gpu_stats = html.escape(gpu_stats) if gpu_stats else ""
+
         header = (
-            f"🖥 <b>{self.hostname}</b> (PID: {self.pid})\n"
-            f"⚙️ <code>{self.command}</code>\n\n"
+            f"🖥 <b>{safe_hostname}</b> (PID: {self.pid})\n"
+            f"⚙️ <code>{safe_command}</code>\n\n"
             f"Status: {status_icon}\n"
             f"Time: {duration}\n"
             f"CPU: {cpu}% | RAM: {mem}%\n"
         )
-        if gpu_stats:
-            header += f"<code>{gpu_stats}</code>\n"
+        if safe_gpu_stats:
+            header += f"<code>{safe_gpu_stats}</code>\n"
 
         header += f"\n📜 <b>Recent Log (Last {MAX_LOG_LINES}):</b>\n"
 

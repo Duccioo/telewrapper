@@ -10,6 +10,8 @@ import uuid
 import warnings
 import html
 import re
+import pty
+import select
 from collections import deque
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -34,8 +36,8 @@ UPDATE_INTERVAL = 5.0
 
 def strip_ansi(text):
     """Rimuove codici ANSI (colori, ecc) da una stringa."""
-    ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
-    return ansi_escape.sub('', text)
+    ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+    return ansi_escape.sub("", text)
 
 
 class TeleWrapper:
@@ -173,29 +175,78 @@ class TeleWrapper:
         return InlineKeyboardMarkup(buttons)
 
     async def run_process(self):
-        """Esegue il comando utente e cattura l'output."""
+        """Esegue il comando utente e cattura l'output usando PTY per line-buffered output."""
         # Force unbuffered output for Python scripts
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
-
-        # Se siamo su Windows usiamo una shell diversa, ma per Linux/Mac standard è OK
-        self.process = await asyncio.create_subprocess_shell(
-            self.command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            cwd=self.working_dir,
-            env=env,
-        )
-
-        while True:
-            line = await self.process.stdout.readline()
-            if not line:
-                break
-            decoded_line = line.decode("utf-8", errors="replace")
-            self.log_buffer.append(decoded_line)
-            sys.stdout.write(decoded_line)
-            sys.stdout.flush()
-
+        
+        # Usa PTY per forzare line-buffered output (simula un terminale reale)
+        # Questo risolve il problema dei log non aggiornanti in screen/background
+        master_fd, slave_fd = pty.openpty()
+        
+        try:
+            self.process = await asyncio.create_subprocess_shell(
+                self.command,
+                stdin=slave_fd,
+                stdout=slave_fd,
+                stderr=slave_fd,
+                cwd=self.working_dir,
+                env=env,
+            )
+            
+            # Chiudi il lato slave nel processo padre
+            os.close(slave_fd)
+            
+            # Leggi l'output dal master fd in modo non-bloccante
+            loop = asyncio.get_event_loop()
+            
+            while True:
+                # Usa select per non bloccare
+                readable, _, _ = select.select([master_fd], [], [], 0.1)
+                
+                if readable:
+                    try:
+                        data = os.read(master_fd, 4096)
+                        if not data:
+                            break
+                        decoded = data.decode("utf-8", errors="replace")
+                        # Split in linee e aggiungi al buffer
+                        for line in decoded.splitlines(keepends=True):
+                            self.log_buffer.append(line)
+                            sys.stdout.write(line)
+                            sys.stdout.flush()
+                    except OSError:
+                        break
+                
+                # Controlla se il processo è terminato
+                if self.process.returncode is not None:
+                    # Leggi eventuale output rimanente
+                    try:
+                        while True:
+                            readable, _, _ = select.select([master_fd], [], [], 0.1)
+                            if not readable:
+                                break
+                            data = os.read(master_fd, 4096)
+                            if not data:
+                                break
+                            decoded = data.decode("utf-8", errors="replace")
+                            for line in decoded.splitlines(keepends=True):
+                                self.log_buffer.append(line)
+                                sys.stdout.write(line)
+                                sys.stdout.flush()
+                    except OSError:
+                        pass
+                    break
+                
+                # Yield per permettere ad altri task di eseguire
+                await asyncio.sleep(0.01)
+            
+        finally:
+            try:
+                os.close(master_fd)
+            except OSError:
+                pass
+        
         self.return_code = await self.process.wait()
         self.is_running = False
 
@@ -254,9 +305,6 @@ class TeleWrapper:
 
             except Exception as e:
                 print(f"Critical Loop Error: {e}")
-
-            if not self.is_running and self.shutdown_signal:
-                break
 
     async def handle_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
@@ -380,7 +428,7 @@ async def main():
     if not token:
         token = os.environ.get("TELEGRAM_TOKEN")
     if not chat_id:
-        chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+        chat_id = os.environ.get("TELEGRAM_CHAT_ID") or os.environ.get("CHAT_ID")
 
     if not token or not chat_id:
         print("Errore: Token e Chat ID sono obbligatori (via CLI, Config o ENV).")
@@ -416,7 +464,7 @@ async def main():
     if wrapper.gpu_available:
         try:
             pynvml.nvmlShutdown()
-        except:
+        except Exception:
             pass
 
 

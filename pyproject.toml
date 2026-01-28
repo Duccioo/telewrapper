@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.8"
 license = {text = "MIT"}
 authors = [
-  {name = "User", email = "user@example.com"}
+  {name = "Duccio", email = "duccio@example.com"}
 ]
 dependencies = [
     "python-telegram-bot>=20.0",
@@ -22,4 +22,4 @@ dependencies = [
 telewrapper = "telewrapper.cli:entry_point"
 
 [project.urls]
-Homepage = "https://github.com/tuouser/telewrapper"
+Homepage = "https://github.com/duccioo/telewrapper"

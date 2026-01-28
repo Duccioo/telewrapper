@@ -54,14 +54,28 @@ export TELEGRAM_CHAT_ID="your_chat_id_here"
 telewrapper --token "your_token" --chat_id "your_chat_id" "your_command"
 ```
 
-### Option 3: Config File
+### Option 3: Config File (YAML or INI)
 
 Create a config file and pass it with `--config`:
 
+**YAML format** (recommended):
+```yaml
+telegram:
+  token: your_bot_token_here
+  chat_id: your_chat_id_here
+
+settings:
+  update_interval: 5.0  # seconds between dashboard updates
+```
+
+**INI format** (legacy):
 ```ini
 [Telegram]
 token = your_bot_token_here
 chat_id = your_chat_id_here
+
+[Settings]
+update_interval = 5.0
 ```
 
 ---

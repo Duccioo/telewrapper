@@ -4,6 +4,7 @@ import argparse
 import configparser
 import os
 import sys
+import yaml
 import socket
 import psutil
 import uuid
@@ -31,7 +32,7 @@ except ImportError:
 
 # --- CONFIGURAZIONE E COSTANTI ---
 MAX_LOG_LINES = 50
-UPDATE_INTERVAL = 5.0
+DEFAULT_UPDATE_INTERVAL = 5.0
 
 
 def strip_ansi(text):
@@ -41,11 +42,12 @@ def strip_ansi(text):
 
 
 class TeleWrapper:
-    def __init__(self, token, chat_id, command, working_dir):
+    def __init__(self, token, chat_id, command, working_dir, update_interval=None):
         self.token = token
         self.chat_id = chat_id
         self.command = command
         self.working_dir = working_dir
+        self.update_interval = update_interval or DEFAULT_UPDATE_INTERVAL
 
         # Identificativo Univoco Sessione (Hostname + PID)
         self.hostname = socket.gethostname()
@@ -179,11 +181,11 @@ class TeleWrapper:
         # Force unbuffered output for Python scripts
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
-        
+
         # Usa PTY per forzare line-buffered output (simula un terminale reale)
         # Questo risolve il problema dei log non aggiornanti in screen/background
         master_fd, slave_fd = pty.openpty()
-        
+
         try:
             self.process = await asyncio.create_subprocess_shell(
                 self.command,
@@ -193,17 +195,17 @@ class TeleWrapper:
                 cwd=self.working_dir,
                 env=env,
             )
-            
+
             # Chiudi il lato slave nel processo padre
             os.close(slave_fd)
-            
+
             # Leggi l'output dal master fd in modo non-bloccante
             loop = asyncio.get_event_loop()
-            
+
             while True:
                 # Usa select per non bloccare
                 readable, _, _ = select.select([master_fd], [], [], 0.1)
-                
+
                 if readable:
                     try:
                         data = os.read(master_fd, 4096)
@@ -217,7 +219,7 @@ class TeleWrapper:
                             sys.stdout.flush()
                     except OSError:
                         break
-                
+
                 # Controlla se il processo è terminato
                 if self.process.returncode is not None:
                     # Leggi eventuale output rimanente
@@ -237,16 +239,16 @@ class TeleWrapper:
                     except OSError:
                         pass
                     break
-                
+
                 # Yield per permettere ad altri task di eseguire
                 await asyncio.sleep(0.01)
-            
+
         finally:
             try:
                 os.close(master_fd)
             except OSError:
                 pass
-        
+
         self.return_code = await self.process.wait()
         self.is_running = False
 
@@ -267,7 +269,7 @@ class TeleWrapper:
             return
 
         while True:
-            await asyncio.sleep(UPDATE_INTERVAL)
+            await asyncio.sleep(self.update_interval)
             if self.shutdown_signal:
                 break
 
@@ -415,15 +417,38 @@ async def main():
 
     token = args.token
     chat_id = args.chat_id
+    update_interval = None
 
+    # Parsing config file (supporta YAML e INI)
     if args.config and os.path.exists(args.config):
-        config = configparser.ConfigParser()
-        config.read(args.config)
-        if "Telegram" in config:
-            if not token:
-                token = config["Telegram"].get("token")
-            if not chat_id:
-                chat_id = config["Telegram"].get("chat_id")
+        config_path = args.config
+
+        if config_path.endswith((".yaml", ".yml")):
+            # YAML config
+            with open(config_path, "r") as f:
+                config = yaml.safe_load(f)
+            if config:
+                telegram_config = config.get("telegram", {})
+                if not token:
+                    token = telegram_config.get("token")
+                if not chat_id:
+                    chat_id = telegram_config.get("chat_id")
+                # Leggi update_interval dalla config
+                settings = config.get("settings", {})
+                update_interval = settings.get("update_interval", update_interval)
+        else:
+            # INI config (retrocompatibilità)
+            ini_config = configparser.ConfigParser()
+            ini_config.read(config_path)
+            if "Telegram" in ini_config:
+                if not token:
+                    token = ini_config["Telegram"].get("token")
+                if not chat_id:
+                    chat_id = ini_config["Telegram"].get("chat_id")
+            if "Settings" in ini_config:
+                update_interval = ini_config["Settings"].getfloat(
+                    "update_interval", fallback=update_interval
+                )
 
     if not token:
         token = os.environ.get("TELEGRAM_TOKEN")
@@ -442,9 +467,14 @@ async def main():
         print("Errore: Devi specificare un comando da eseguire (o usare --test).")
         sys.exit(1)
 
-    print(f"Starting Wrapper for: {args.command}")
+    if update_interval:
+        print(
+            f"Starting Wrapper for: {args.command} (update interval: {update_interval}s)"
+        )
+    else:
+        print(f"Starting Wrapper for: {args.command}")
 
-    wrapper = TeleWrapper(token, chat_id, args.command, os.getcwd())
+    wrapper = TeleWrapper(token, chat_id, args.command, os.getcwd(), update_interval)
     app = Application.builder().token(token).build()
     app.add_handler(CallbackQueryHandler(wrapper.handle_button))
 

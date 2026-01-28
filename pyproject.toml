@@ -15,7 +15,8 @@ authors = [
 dependencies = [
     "python-telegram-bot>=20.0",
     "psutil",
-    "nvidia-ml-py"
+    "nvidia-ml-py",
+    "pyyaml"
 ]
 
 [project.scripts]

@@ -4,6 +4,7 @@ import argparse
 import configparser
 import os
 import sys
+import platform
 import yaml
 import socket
 import psutil
@@ -11,9 +12,15 @@ import uuid
 import warnings
 import html
 import re
-import pty
-import select
 from collections import deque
+
+# Rileva sistema operativo
+IS_WINDOWS = platform.system() == "Windows"
+
+# Moduli Unix-only (PTY per terminal emulation)
+if not IS_WINDOWS:
+    import pty
+    import select
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
@@ -210,13 +217,53 @@ class TeleWrapper:
         return InlineKeyboardMarkup(buttons)
 
     async def run_process(self):
-        """Esegue il comando utente e cattura l'output usando PTY per line-buffered output."""
-        # Force unbuffered output for Python scripts
+        """Esegue il comando utente e cattura l'output.
+
+        Su Unix/macOS usa PTY per line-buffered output (migliore per progress bar).
+        Su Windows usa subprocess standard con PIPE.
+        """
+        if IS_WINDOWS:
+            await self._run_process_windows()
+        else:
+            await self._run_process_unix()
+
+    async def _run_process_windows(self):
+        """Implementazione Windows usando subprocess standard con PIPE."""
+        env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
+
+        self.process = await asyncio.create_subprocess_shell(
+            self.command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            cwd=self.working_dir,
+            env=env,
+        )
+
+        async def read_output():
+            while True:
+                try:
+                    # Leggi una riga alla volta
+                    line = await self.process.stdout.readline()
+                    if not line:
+                        break
+                    decoded = line.decode("utf-8", errors="replace")
+                    process_terminal_output(self.log_buffer, decoded)
+                    sys.stdout.write(decoded)
+                    sys.stdout.flush()
+                except Exception:
+                    break
+
+        await read_output()
+        self.return_code = await self.process.wait()
+        self.is_running = False
+
+    async def _run_process_unix(self):
+        """Implementazione Unix/macOS usando PTY per terminal emulation."""
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
 
         # Usa PTY per forzare line-buffered output (simula un terminale reale)
-        # Questo risolve il problema dei log non aggiornanti in screen/background
         master_fd, slave_fd = pty.openpty()
 
         try:
@@ -232,9 +279,6 @@ class TeleWrapper:
             # Chiudi il lato slave nel processo padre
             os.close(slave_fd)
 
-            # Leggi l'output dal master fd in modo non-bloccante
-            loop = asyncio.get_event_loop()
-
             while True:
                 # Usa select per non bloccare
                 readable, _, _ = select.select([master_fd], [], [], 0.1)
@@ -245,7 +289,6 @@ class TeleWrapper:
                         if not data:
                             break
                         decoded = data.decode("utf-8", errors="replace")
-                        # Usa la funzione che gestisce correttamente \r per le progress bar
                         process_terminal_output(self.log_buffer, decoded)
                         sys.stdout.write(decoded)
                         sys.stdout.flush()

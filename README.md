@@ -18,6 +18,8 @@
 | 🌐 **Multi-Host Ready** | Run on multiple machines with the same bot token |
 | ⏱️ **Execution Timer** | Track how long your commands have been running |
 | 🎛️ **Remote Control** | Terminate processes or close wrapper via inline buttons |
+| 🖥️ **Cross-Platform** | Works on Windows, macOS, and Linux |
+| 📈 **Progress Bar Support** | Smart handling of `tqdm` and similar progress bars |
 
 ---
 
@@ -179,9 +181,20 @@ GPU 0: 87% | VRAM: 8.2/24.0GB (34%)
 
 - 🐍 Use `python -u` for unbuffered Python output
 - 📝 The dashboard shows the **last 50 lines** of output
-- ⏰ Dashboard updates every **3 seconds**
+- ⏰ Dashboard updates every **5 seconds** (configurable via `update_interval`)
 - 🖥️ GPU stats only appear if NVIDIA GPU is detected
 - 🔄 Use the **Refresh** button for immediate updates
+- 📈 Progress bars (tqdm, etc.) are automatically handled and display correctly
+
+---
+
+## 🖥️ Platform Support
+
+| Platform | Terminal Emulation | Notes |
+|----------|-------------------|-------|
+| **Linux** | PTY (full) | Best support, native terminal emulation |
+| **macOS** | PTY (full) | Native terminal emulation |
+| **Windows** | PIPE | Subprocess with line-buffered output |
 
 ---
 

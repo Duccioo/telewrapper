@@ -41,6 +41,40 @@ def strip_ansi(text):
     return ansi_escape.sub("", text)
 
 
+def process_terminal_output(log_buffer, data):
+    """
+    Processa l'output del terminale gestendo correttamente carriage return (\r).
+
+    Le progress bar (tqdm, etc.) usano \r per sovrascrivere la riga corrente.
+    Questa funzione simula quel comportamento nel buffer di log.
+    """
+    # Split by \r first to handle carriage returns
+    # Each segment after \r should overwrite from the start of the line
+    segments = data.split("\r")
+
+    for i, segment in enumerate(segments):
+        if i == 0:
+            # First segment: append to buffer normally
+            if segment:
+                lines = segment.splitlines(keepends=True)
+                for line in lines:
+                    log_buffer.append(line)
+        else:
+            # After a \r: this content should replace the current line
+            if segment:
+                # If there's content after \r, it should overwrite the last incomplete line
+                lines = segment.splitlines(keepends=True)
+
+                # Check if the last item in buffer is an incomplete line (no newline)
+                if log_buffer and not log_buffer[-1].endswith("\n"):
+                    # Overwrite the last incomplete line
+                    log_buffer.pop()
+
+                # If the first new line doesn't end with \n, it's the new "current line"
+                for line in lines:
+                    log_buffer.append(line)
+
+
 class TeleWrapper:
     def __init__(self, token, chat_id, command, working_dir, update_interval=None):
         self.token = token
@@ -212,11 +246,10 @@ class TeleWrapper:
                         if not data:
                             break
                         decoded = data.decode("utf-8", errors="replace")
-                        # Split in linee e aggiungi al buffer
-                        for line in decoded.splitlines(keepends=True):
-                            self.log_buffer.append(line)
-                            sys.stdout.write(line)
-                            sys.stdout.flush()
+                        # Usa la funzione che gestisce correttamente \r per le progress bar
+                        process_terminal_output(self.log_buffer, decoded)
+                        sys.stdout.write(decoded)
+                        sys.stdout.flush()
                     except OSError:
                         break
 
@@ -232,10 +265,9 @@ class TeleWrapper:
                             if not data:
                                 break
                             decoded = data.decode("utf-8", errors="replace")
-                            for line in decoded.splitlines(keepends=True):
-                                self.log_buffer.append(line)
-                                sys.stdout.write(line)
-                                sys.stdout.flush()
+                            process_terminal_output(self.log_buffer, decoded)
+                            sys.stdout.write(decoded)
+                            sys.stdout.flush()
                     except OSError:
                         pass
                     break

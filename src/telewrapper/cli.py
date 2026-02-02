@@ -48,31 +48,30 @@ def process_terminal_output(log_buffer, data):
     Le progress bar (tqdm, etc.) usano \r per sovrascrivere la riga corrente.
     Questa funzione simula quel comportamento nel buffer di log.
     """
-    # Split by \r first to handle carriage returns
-    # Each segment after \r should overwrite from the start of the line
-    segments = data.split("\r")
+    # Se contiene \r, è una progress bar - teniamo solo l'ultimo stato
+    if "\r" in data:
+        # Prendi solo l'ultima parte dopo l'ultimo \r (lo stato più recente)
+        parts = data.split("\r")
+        # Filtra parti vuote e prendi l'ultima non vuota
+        non_empty_parts = [p for p in parts if p.strip()]
 
-    for i, segment in enumerate(segments):
-        if i == 0:
-            # First segment: append to buffer normally
-            if segment:
-                lines = segment.splitlines(keepends=True)
-                for line in lines:
-                    log_buffer.append(line)
-        else:
-            # After a \r: this content should replace the current line
-            if segment:
-                # If there's content after \r, it should overwrite the last incomplete line
-                lines = segment.splitlines(keepends=True)
+        if non_empty_parts:
+            latest = non_empty_parts[-1]
 
-                # Check if the last item in buffer is an incomplete line (no newline)
-                if log_buffer and not log_buffer[-1].endswith("\n"):
-                    # Overwrite the last incomplete line
-                    log_buffer.pop()
+            # Rimuovi l'ultima riga incompleta dal buffer (la vecchia progress bar)
+            while log_buffer and not log_buffer[-1].endswith("\n"):
+                log_buffer.pop()
 
-                # If the first new line doesn't end with \n, it's the new "current line"
-                for line in lines:
-                    log_buffer.append(line)
+            # Aggiungi solo l'ultimo stato
+            if latest.endswith("\n"):
+                log_buffer.append(latest)
+            else:
+                log_buffer.append(latest)
+    else:
+        # Output normale senza \r - aggiungi normalmente
+        lines = data.splitlines(keepends=True)
+        for line in lines:
+            log_buffer.append(line)
 
 
 class TeleWrapper:

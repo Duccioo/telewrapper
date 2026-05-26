@@ -199,13 +199,43 @@ class TeleWrapperBot:
                 self.process_manager.terminate()
 
             elif action == "download_log":
-                if self.log_file_path and os.path.exists(self.log_file_path):
+                max_log_file_size = 45 * 1024 * 1024
+
+                if not self.log_file_path:
+                    await query.answer("File di log non configurato.", show_alert=True)
+                    return
+
+                if not os.path.exists(self.log_file_path):
+                    await query.answer("File di log non trovato.", show_alert=True)
+                    return
+
+                try:
+                    log_file_size = os.path.getsize(self.log_file_path)
+                except OSError:
+                    await query.answer("Impossibile leggere il file di log.", show_alert=True)
+                    return
+
+                if log_file_size > max_log_file_size:
+                    await query.answer(
+                        "File di log troppo grande per l'invio tramite Telegram.",
+                        show_alert=True
+                    )
+                    return
+
+                try:
                     with open(self.log_file_path, "rb") as f:
                         await context.bot.send_document(
                             chat_id=self.chat_id,
                             document=f,
                             filename=os.path.basename(self.log_file_path)
                         )
+                except BadRequest:
+                    await query.answer(
+                        "Telegram ha rifiutato l'invio del file di log.",
+                        show_alert=True
+                    )
+                except OSError:
+                    await query.answer("Errore durante l'apertura del file di log.", show_alert=True)
 
             elif action == "exit":
                 self.shutdown_signal = True

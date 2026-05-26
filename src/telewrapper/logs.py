@@ -26,7 +26,7 @@ class LogBuffer:
         data = re.sub(r'\x1b\[\?[0-9]+[lh]', '', data)
 
         # 2. Tokenize into control sequences and text
-        pattern = re.compile(r'(\r|\n|\b|\x1b\[[0-9]*[A-Z])')
+        pattern = re.compile(r'(\r|\n|\x08|\x1b\[[0-9]*[A-Z])')
         parts = pattern.split(data)
 
         for part in parts:

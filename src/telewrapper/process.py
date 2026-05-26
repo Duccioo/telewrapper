@@ -14,13 +14,24 @@ if not IS_WINDOWS:
 
 
 class ProcessManager:
-    def __init__(self, command, working_dir, log_buffer):
+    def __init__(self, command, working_dir, log_buffer, log_file_path=None):
         self.command = command
         self.working_dir = working_dir
         self.log_buffer = log_buffer
+        self.log_file_path = log_file_path
         self.process = None
         self.is_running = True
         self.return_code = None
+
+        # Inizializza il file log
+        if self.log_file_path:
+            with open(self.log_file_path, "w", encoding="utf-8") as f:
+                f.write(f"--- TeleWrapper Log Started ---\nCommand: {self.command}\n\n")
+
+    def _write_to_log_file(self, decoded_text):
+        if self.log_file_path:
+            with open(self.log_file_path, "a", encoding="utf-8") as f:
+                f.write(decoded_text)
 
     async def run(self):
         """Esegue il comando utente e cattura l'output."""
@@ -45,12 +56,13 @@ class ProcessManager:
         async def read_output():
             while True:
                 try:
-                    # Leggi una riga alla volta
-                    line = await self.process.stdout.readline()
-                    if not line:
+                    # Leggi in chunk invece che per riga per non bloccare le progress bar
+                    chunk = await self.process.stdout.read(4096)
+                    if not chunk:
                         break
-                    decoded = line.decode("utf-8", errors="replace")
+                    decoded = chunk.decode("utf-8", errors="replace")
                     process_terminal_output(self.log_buffer, decoded)
+                    self._write_to_log_file(decoded)
                     sys.stdout.write(decoded)
                     sys.stdout.flush()
                 except Exception:
@@ -81,6 +93,9 @@ class ProcessManager:
             # Chiudi il lato slave nel processo padre
             os.close(slave_fd)
 
+            # Task per attendere la terminazione del processo in background
+            wait_task = asyncio.create_task(self.process.wait())
+
             while True:
                 # Usa select per non bloccare
                 readable, _, _ = select.select([master_fd], [], [], 0.1)
@@ -92,13 +107,14 @@ class ProcessManager:
                             break
                         decoded = data.decode("utf-8", errors="replace")
                         process_terminal_output(self.log_buffer, decoded)
+                        self._write_to_log_file(decoded)
                         sys.stdout.write(decoded)
                         sys.stdout.flush()
                     except OSError:
                         break
 
                 # Controlla se il processo è terminato
-                if self.process.returncode is not None:
+                if wait_task.done():
                     # Leggi eventuale output rimanente
                     try:
                         while True:
@@ -110,6 +126,7 @@ class ProcessManager:
                                 break
                             decoded = data.decode("utf-8", errors="replace")
                             process_terminal_output(self.log_buffer, decoded)
+                            self._write_to_log_file(decoded)
                             sys.stdout.write(decoded)
                             sys.stdout.flush()
                     except OSError:
@@ -125,7 +142,7 @@ class ProcessManager:
             except OSError:
                 pass
 
-        self.return_code = await self.process.wait()
+        self.return_code = await wait_task
         self.is_running = False
 
     def terminate(self):

@@ -7,7 +7,7 @@ from telegram.ext import Application, CallbackQueryHandler
 from telegram.constants import ParseMode
 
 from telewrapper.config import load_config
-from telewrapper.logs import MAX_LOG_LINES
+from telewrapper.logs import LogBuffer
 from telewrapper.system_stats import SystemMonitor
 from telewrapper.process import ProcessManager
 from telewrapper.bot import TeleWrapperBot
@@ -64,8 +64,10 @@ async def run_test_mode(token, chat_id):
         sys.exit(1)
 
 
+from datetime import datetime
+
 async def main():
-    command, token, chat_id, update_interval, is_test = load_config()
+    command, token, chat_id, update_interval, is_test, enable_log = load_config()
 
     if not token or not chat_id:
         print("Errore: Token e Chat ID sono obbligatori (via CLI, Config o ENV).")
@@ -81,11 +83,19 @@ async def main():
 
     print(f"Starting Wrapper for: {command} (update interval: {update_interval}s)")
 
+    log_file_path = None
+    if enable_log:
+        log_dir = "telewrapper_log"
+        os.makedirs(log_dir, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_file_path = os.path.join(log_dir, f"telewrapper_{timestamp}.log")
+        print(f"Logging output to: {log_file_path}")
+
     # Setup components
-    log_buffer = deque(maxlen=MAX_LOG_LINES)
+    log_buffer = LogBuffer()
     system_monitor = SystemMonitor()
-    process_manager = ProcessManager(command, os.getcwd(), log_buffer)
-    bot = TeleWrapperBot(token, chat_id, command, process_manager, system_monitor, update_interval)
+    process_manager = ProcessManager(command, os.getcwd(), log_buffer, log_file_path=log_file_path)
+    bot = TeleWrapperBot(token, chat_id, command, process_manager, system_monitor, update_interval, log_file_path=log_file_path)
 
     app = Application.builder().token(token).build()
     app.add_handler(CallbackQueryHandler(bot.handle_button))

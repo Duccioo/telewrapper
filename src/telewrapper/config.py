@@ -20,6 +20,11 @@ def load_config():
         action="store_true",
         help="Esegui un test di connessione e funzionalità",
     )
+    parser.add_argument(
+        "--log",
+        action="store_true",
+        help="Salva tutto l'output del comando in un file di log locale",
+    )
 
     args = parser.parse_args()
 
@@ -72,4 +77,4 @@ def load_config():
     if update_interval is None:
         update_interval = DEFAULT_UPDATE_INTERVAL
 
-    return args.command, token, chat_id, update_interval, args.test
+    return args.command, token, chat_id, update_interval, args.test, args.log

@@ -13,7 +13,7 @@ from telewrapper.logs import strip_ansi, MAX_LOG_LINES
 
 class TeleWrapperBot:
     def __init__(
-        self, token, chat_id, command, process_manager, system_monitor, update_interval
+        self, token, chat_id, command, process_manager, system_monitor, update_interval, log_file_path=None
     ):
         self.token = token
         self.chat_id = chat_id
@@ -21,6 +21,7 @@ class TeleWrapperBot:
         self.process_manager = process_manager
         self.system_monitor = system_monitor
         self.update_interval = update_interval
+        self.log_file_path = log_file_path
 
         self.hostname = socket.gethostname()
         self.pid = os.getpid()
@@ -47,7 +48,7 @@ class TeleWrapperBot:
         )
 
         # Costruzione Log (Clean ANSI & Escape HTML)
-        raw_logs = "".join(self.process_manager.log_buffer)
+        raw_logs = self.process_manager.log_buffer.get_lines()
         clean_logs = strip_ansi(raw_logs)
         logs = html.escape(clean_logs)
 
@@ -95,6 +96,12 @@ class TeleWrapperBot:
         buttons = [
             [InlineKeyboardButton("🔄 Refresh", callback_data=f"refresh:{pfx}")],
         ]
+
+        if self.log_file_path and os.path.exists(self.log_file_path):
+            buttons.append(
+                [InlineKeyboardButton("📄 Scarica Log", callback_data=f"download_log:{pfx}")]
+            )
+
         if self.process_manager.is_running:
             buttons.append(
                 [
@@ -162,8 +169,11 @@ class TeleWrapperBot:
                     except Exception as e:
                         print(f"Telegram Update Error: {e}")
 
+            except asyncio.CancelledError:
+                break
             except Exception as e:
                 print(f"Critical Loop Error: {e}")
+                await asyncio.sleep(1) # Prevent tight crash loop
 
     async def handle_button(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
@@ -187,6 +197,45 @@ class TeleWrapperBot:
 
             elif action == "kill":
                 self.process_manager.terminate()
+
+            elif action == "download_log":
+                max_log_file_size = 45 * 1024 * 1024
+
+                if not self.log_file_path:
+                    await query.answer("File di log non configurato.", show_alert=True)
+                    return
+
+                if not os.path.exists(self.log_file_path):
+                    await query.answer("File di log non trovato.", show_alert=True)
+                    return
+
+                try:
+                    log_file_size = os.path.getsize(self.log_file_path)
+                except OSError:
+                    await query.answer("Impossibile leggere il file di log.", show_alert=True)
+                    return
+
+                if log_file_size > max_log_file_size:
+                    await query.answer(
+                        "File di log troppo grande per l'invio tramite Telegram.",
+                        show_alert=True
+                    )
+                    return
+
+                try:
+                    with open(self.log_file_path, "rb") as f:
+                        await context.bot.send_document(
+                            chat_id=self.chat_id,
+                            document=f,
+                            filename=os.path.basename(self.log_file_path)
+                        )
+                except BadRequest:
+                    await query.answer(
+                        "Telegram ha rifiutato l'invio del file di log.",
+                        show_alert=True
+                    )
+                except OSError:
+                    await query.answer("Errore durante l'apertura del file di log.", show_alert=True)
 
             elif action == "exit":
                 self.shutdown_signal = True

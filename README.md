@@ -19,7 +19,8 @@
 | ⏱️ **Execution Timer** | Track how long your commands have been running |
 | 🎛️ **Remote Control** | Terminate processes or close wrapper via inline buttons |
 | 🖥️ **Cross-Platform** | Works on Windows, macOS, and Linux |
-| 📈 **Progress Bar Support** | Smart handling of `tqdm` and similar progress bars |
+| 📈 **Progress Bar Support** | Smart handling of `tqdm` and `rich` progress bars, with proper terminal emulation |
+| 💾 **Log Saving** | Use `--log` to automatically save the full command output locally and download it via Telegram |
 
 ---
 
@@ -158,6 +159,7 @@ GPU 0: 87% | VRAM: 8.2/24.0GB (34%)
 | `--token` | Telegram Bot Token |
 | `--chat_id` | Telegram Chat ID |
 | `--config` | Path to configuration file |
+| `--log` | Save full command output to a file and enable download button |
 | `--test` | Run a connection test |
 
 ---

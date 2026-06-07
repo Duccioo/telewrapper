@@ -33,12 +33,16 @@ cd telewrapper
 
 # Install the package
 pip install .
+
+# Development install, useful when editing this checkout
+pip install -e .
 ```
 
 **Dependencies:** Automatically installed via pip
 - `python-telegram-bot>=20.0`
 - `psutil`
 - `pynvml` (optional, for NVIDIA GPU stats)
+- `rich` (used by the long progress demo and supported command output)
 
 ---
 
@@ -69,6 +73,7 @@ telegram:
 
 settings:
   update_interval: 5.0  # seconds between dashboard updates
+  enable_log: true      # save full output and enable the Telegram download button
 ```
 
 **INI format** (legacy):
@@ -79,6 +84,13 @@ chat_id = your_chat_id_here
 
 [Settings]
 update_interval = 5.0
+enable_log = true
+```
+
+You can also enable persistent log files with an environment variable:
+
+```bash
+export TELEWRAPPER_ENABLE_LOG=true
 ```
 
 ---
@@ -94,9 +106,37 @@ telewrapper "python train.py"
 # Run a long-running script
 telewrapper "python -u my_training_script.py --epochs 100"
 
+# Save the full output locally and show a "Download Log" button
+telewrapper --log "python -u my_training_script.py --epochs 100"
+
 # Test your bot connection
 telewrapper --test
 ```
+
+### Progress Bar Demo
+
+The repository includes a longer local demo that exercises different terminal output styles:
+
+- plain log lines
+- carriage-return spinners
+- single-line progress bars
+- training-style progress bars with metrics
+- multi-line cursor-up dashboards
+- Rich progress bars with multiple concurrent tasks
+
+Run it directly:
+
+```bash
+python test/long_test.py
+```
+
+Run it through TeleWrapper:
+
+```bash
+telewrapper --config config.yaml "python test/long_test.py"
+```
+
+For live progress demos, keep `settings.update_interval` low, for example `5.0`. Higher values such as `60.0` reduce Telegram traffic but may make short commands appear stuck on the initial `Starting...` message until the next update or the final forced refresh.
 
 ### What You'll See on Telegram
 
@@ -164,6 +204,20 @@ GPU 0: 87% | VRAM: 8.2/24.0GB (34%)
 
 ---
 
+## 💾 Log Files
+
+Full log files are disabled by default unless you pass `--log`, set `settings.enable_log: true`, or export `TELEWRAPPER_ENABLE_LOG=true`.
+
+When enabled, TeleWrapper writes logs to:
+
+```text
+telewrapper_log/telewrapper_YYYYMMDD_HHMMSS.log
+```
+
+The Telegram dashboard also shows a **Scarica Log / Download Log** button while that file exists.
+
+---
+
 ## 🔧 How to Get Your Telegram Credentials
 
 ### 1. Create a Bot Token
@@ -186,7 +240,8 @@ GPU 0: 87% | VRAM: 8.2/24.0GB (34%)
 - ⏰ Dashboard updates every **5 seconds** (configurable via `update_interval`)
 - 🖥️ GPU stats only appear if NVIDIA GPU is detected
 - 🔄 Use the **Refresh** button for immediate updates
-- 📈 Progress bars (tqdm, etc.) are automatically handled and display correctly
+- 📈 Progress bars (`tqdm`, `rich`, carriage-return bars, and simple cursor-up dashboards) are handled by the log buffer
+- 🤖 Run only one active TeleWrapper polling instance per Telegram bot token. Telegram will raise `Conflict: terminated by other getUpdates request` if two wrappers poll the same bot at once, which can break inline buttons.
 
 ---
 

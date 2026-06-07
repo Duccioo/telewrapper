@@ -104,9 +104,15 @@ async def main():
         await app.start()
         await app.updater.start_polling()
         updater_task = asyncio.create_task(bot.telegram_updater(app))
+
+        for _ in range(50):
+            if bot.dashboard_message_id or updater_task.done():
+                break
+            await asyncio.sleep(0.1)
         
         # Start process
         await process_manager.run()
+        await bot.update_dashboard_message(app.bot, force=True)
 
         # Wait for shutdown signal (from bot or process completion)
         while not bot.shutdown_signal:

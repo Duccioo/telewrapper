@@ -32,6 +32,39 @@ class TeleWrapperBot:
         self.dashboard_message_id = None
         self.last_message_text = None
 
+    async def update_dashboard_message(self, bot_api, force=False):
+        if not self.dashboard_message_id:
+            return False
+
+        text = self.build_dashboard_text()
+        if not force and text == self.last_message_text:
+            return False
+
+        try:
+            await bot_api.edit_message_text(
+                chat_id=self.chat_id,
+                message_id=self.dashboard_message_id,
+                text=text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=self.get_keyboard(),
+            )
+            self.last_message_text = text
+            return True
+        except BadRequest as e:
+            if "Message is not modified" in str(e):
+                return False
+            print(f"Telegram BadRequest: {e}")
+        except RetryAfter as e:
+            print(f"Telegram FloodLimit: sleeping {e.retry_after}s")
+            await asyncio.sleep(e.retry_after)
+        except (NetworkError, TimedOut):
+            # Problemi di rete temporanei, riprova al prossimo ciclo
+            pass
+        except Exception as e:
+            print(f"Telegram Update Error: {e}")
+
+        return False
+
     def build_dashboard_text(self):
         """Costruisce il messaggio di stato."""
         cpu, mem, gpu_stats = self.system_monitor.get_stats()
@@ -48,11 +81,11 @@ class TeleWrapperBot:
         )
 
         # Costruzione Log (Clean ANSI & Escape HTML)
-        raw_logs = self.process_manager.log_buffer.get_lines()
+        raw_logs = self.process_manager.log_buffer.get_lines().rstrip("\n")
         clean_logs = strip_ansi(raw_logs)
         logs = html.escape(clean_logs)
 
-        if not logs:
+        if not clean_logs.strip():
             logs = "Starting..."
 
         # Escape other fields per sicurezza HTML
@@ -139,35 +172,7 @@ class TeleWrapperBot:
 
             try:
                 if self.dashboard_message_id:
-                    text = self.build_dashboard_text()
-
-                    # Evita chiamate API inutili se il testo non è cambiato
-                    if text == self.last_message_text:
-                        continue
-
-                    try:
-                        await app.bot.edit_message_text(
-                            chat_id=self.chat_id,
-                            message_id=self.dashboard_message_id,
-                            text=text,
-                            parse_mode=ParseMode.HTML,
-                            reply_markup=self.get_keyboard(),
-                        )
-                        self.last_message_text = text
-                    except BadRequest as e:
-                        if "Message is not modified" in str(e):
-                            # Ignora errore se il messaggio è identico (caso limite)
-                            pass
-                        else:
-                            print(f"Telegram BadRequest: {e}")
-                    except RetryAfter as e:
-                        print(f"Telegram FloodLimit: sleeping {e.retry_after}s")
-                        await asyncio.sleep(e.retry_after)
-                    except (NetworkError, TimedOut):
-                        # Problemi di rete temporanei, riprova al prossimo ciclo
-                        pass
-                    except Exception as e:
-                        print(f"Telegram Update Error: {e}")
+                    await self.update_dashboard_message(app.bot)
 
             except asyncio.CancelledError:
                 break
@@ -192,11 +197,11 @@ class TeleWrapperBot:
             await query.answer()
 
             if action == "refresh":
-                # Il refresh avviene automaticamente
-                pass
+                await self.update_dashboard_message(context.bot, force=True)
 
             elif action == "kill":
                 self.process_manager.terminate()
+                await self.update_dashboard_message(context.bot, force=True)
 
             elif action == "download_log":
                 if self.log_file_path and os.path.exists(self.log_file_path):

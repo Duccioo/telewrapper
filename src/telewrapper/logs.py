@@ -19,6 +19,7 @@ class LogBuffer:
         self.max_lines = max_lines
         self.lines = [""]
         self.cursor_y = 0
+        self._pending_cr = False
 
     def write(self, data):
         # 1. Strip color and style codes, and cursor hide/show
@@ -33,18 +34,18 @@ class LogBuffer:
             if not part:
                 continue
 
-            if part == '\r':
-                # Carriage return overwrites the current line from the start
-                self.lines[self.cursor_y] = ""
-            elif part == '\n':
-                self.cursor_y += 1
-                if self.cursor_y >= len(self.lines):
-                    self.lines.append("")
+            if self._pending_cr:
+                self._pending_cr = False
+                if part == '\n':
+                    self._newline()
+                    continue
+                self._carriage_return()
 
-                # Prevenire memoria infinita (teniamo un po' di buffer in più per sicurezza)
-                if len(self.lines) > self.max_lines * 2:
-                    self.lines = self.lines[-self.max_lines:]
-                    self.cursor_y = len(self.lines) - 1
+            if part == '\r':
+                # Delay handling so CRLF from PTYs is treated as a normal newline.
+                self._pending_cr = True
+            elif part == '\n':
+                self._newline()
             elif part == '\b':
                 self.lines[self.cursor_y] = self.lines[self.cursor_y][:-1]
             elif part.startswith('\x1b['):
@@ -59,6 +60,20 @@ class LogBuffer:
                 # Ignora le altre sequenze CSI
             else:
                 self.lines[self.cursor_y] += part
+
+    def _carriage_return(self):
+        # Carriage return overwrites the current line from the start.
+        self.lines[self.cursor_y] = ""
+
+    def _newline(self):
+        self.cursor_y += 1
+        if self.cursor_y >= len(self.lines):
+            self.lines.append("")
+
+        # Prevenire memoria infinita (teniamo un po' di buffer in più per sicurezza)
+        if len(self.lines) > self.max_lines * 2:
+            self.lines = self.lines[-self.max_lines:]
+            self.cursor_y = len(self.lines) - 1
 
     def get_lines(self):
         """Restituisce le ultime N righe come singola stringa."""

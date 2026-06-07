@@ -6,6 +6,14 @@ import yaml
 DEFAULT_UPDATE_INTERVAL = 5.0
 
 
+def _as_bool(value):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    return bool(value)
+
+
 def load_config():
     """Parses command line arguments and loads configuration files."""
     parser = argparse.ArgumentParser(description="Telegram Command Wrapper")
@@ -31,6 +39,7 @@ def load_config():
     token = args.token
     chat_id = args.chat_id
     update_interval = None
+    enable_log = args.log
 
     # Parsing config file (supporta YAML e INI)
     if args.config and os.path.exists(args.config):
@@ -50,6 +59,8 @@ def load_config():
                     # Leggi update_interval dalla config
                     settings = config.get("settings", {})
                     update_interval = settings.get("update_interval", update_interval)
+                    if not enable_log and "enable_log" in settings:
+                        enable_log = _as_bool(settings.get("enable_log"))
             except Exception as e:
                 print(f"Error loading YAML config: {e}")
         else:
@@ -66,6 +77,8 @@ def load_config():
                     update_interval = ini_config["Settings"].getfloat(
                         "update_interval", fallback=update_interval
                     )
+                    if not enable_log and ini_config["Settings"].get("enable_log"):
+                        enable_log = ini_config["Settings"].getboolean("enable_log")
             except Exception as e:
                 print(f"Error loading INI config: {e}")
 
@@ -77,4 +90,7 @@ def load_config():
     if update_interval is None:
         update_interval = DEFAULT_UPDATE_INTERVAL
 
-    return args.command, token, chat_id, update_interval, args.test, args.log
+    if not enable_log and os.environ.get("TELEWRAPPER_ENABLE_LOG"):
+        enable_log = _as_bool(os.environ.get("TELEWRAPPER_ENABLE_LOG"))
+
+    return args.command, token, chat_id, update_interval, args.test, enable_log
